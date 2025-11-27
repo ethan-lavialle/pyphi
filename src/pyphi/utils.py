@@ -7,12 +7,9 @@ from NumPy and SciPy where possible.
 
 from __future__ import annotations
 
-import os
-from typing import Callable
-
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2, f as f_dist, t as t_dist
+from scipy.stats import chi2, f as f_dist
 
 
 def mean(X: np.ndarray) -> np.ndarray:
@@ -141,8 +138,7 @@ def n2z(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Convert NaN values to zeros for computation.
 
     This function replaces NaN values with zeros and returns a map
-    of where the NaN values were located, allowing restoration later
-    with `z2n()`.
+    of where the NaN values were located.
 
     Parameters
     ----------
@@ -162,28 +158,6 @@ def n2z(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     else:
         X_nan_map = X_nan_map.astype(int)
     return X, X_nan_map
-
-
-def z2n(X: np.ndarray, X_nan_map: np.ndarray) -> np.ndarray:
-    """Convert zeros back to NaN using a previously stored NaN map.
-
-    This function restores NaN values to positions indicated by
-    X_nan_map, reversing the operation performed by `n2z()`.
-
-    Parameters
-    ----------
-    X : np.ndarray
-        Array with zeros in positions that should be NaN.
-    X_nan_map : np.ndarray
-        Binary array where 1 indicates positions to restore as NaN.
-
-    Returns
-    -------
-    np.ndarray
-        Array with NaN values restored (modified in place).
-    """
-    X[X_nan_map == 1] = np.nan
-    return X
 
 
 # =============================================================================
@@ -221,56 +195,9 @@ def spe_ci(spe: np.ndarray) -> tuple[float, float]:
     return lim95, lim99
 
 
-def single_score_conf_int(t: np.ndarray) -> tuple[float, float]:
-    """Calculate confidence intervals for a single score vector.
-
-    Uses the t-distribution for two-tailed confidence intervals.
-
-    Parameters
-    ----------
-    t : np.ndarray
-        Array of score values from observations.
-
-    Returns
-    -------
-    tuple[float, float]
-        - lim95: 95% confidence limit (two-tailed)
-        - lim99: 99% confidence limit (two-tailed)
-    """
-    n = t.shape[0]
-    st = np.var(t, ddof=1)
-    # Two-tailed: 0.975 for 95% CI, 0.995 for 99% CI
-    lim95 = t_dist.ppf(0.975, n - 1) * np.sqrt(st)
-    lim99 = t_dist.ppf(0.995, n - 1) * np.sqrt(st)
-    return lim95, lim99
-
-
 # =============================================================================
 # Array Utilities
 # =============================================================================
-
-
-def find(a: np.ndarray, func: Callable) -> list[int]:
-    """Find indices where a function/condition is True.
-
-    Parameters
-    ----------
-    a : np.ndarray
-        Input array to search.
-    func : Callable
-        Function that takes a value and returns True/False.
-
-    Returns
-    -------
-    list[int]
-        List of indices where func(value) is True.
-
-    Examples
-    --------
-    >>> find(np.array([1, 5, 3, 8, 2]), lambda x: x > 3)
-    [1, 3]
-    """
-    return [i for (i, val) in enumerate(a) if func(val)]
 
 
 def unique(df: pd.DataFrame, colid: str) -> list:
@@ -298,161 +225,6 @@ def unique(df: pd.DataFrame, colid: str) -> list:
     [1, 2, 3]
     """
     return pd.unique(df[colid]).tolist()
-
-
-# =============================================================================
-# Data Cleaning Utilities
-# =============================================================================
-
-
-def clean_htmls() -> None:
-    """Remove all HTML files from the current directory.
-
-    Deletes any file with 'html' in its name from the current working
-    directory. Useful for cleaning up temporary HTML reports.
-    """
-    files_here = os.listdir(".")
-    for f in files_here:
-        if "html" in f:
-            os.remove(f)
-
-
-def clean_empty_rows(
-    X: np.ndarray | pd.DataFrame, *, shush: bool = False
-) -> tuple[np.ndarray | pd.DataFrame, list[str]]:
-    """Remove rows containing all missing data from a matrix.
-
-    Parameters
-    ----------
-    X : np.ndarray or pd.DataFrame
-        Data matrix to clean. If DataFrame, first column is assumed
-        to be observation IDs.
-    shush : bool, default=False
-        If True, suppress console output about removed rows.
-
-    Returns
-    -------
-    tuple[np.ndarray | pd.DataFrame, list[str]]
-        - X_cleaned: Matrix with empty rows removed
-        - rows_removed: List of removed row identifiers
-    """
-    if isinstance(X, np.ndarray):
-        X_ = X.copy()
-        ObsID_ = [f"Obs #{n}" for n in range(1, X.shape[0] + 1)]
-    elif isinstance(X, pd.DataFrame):
-        X_ = np.array(X.values[:, 1:]).astype(float)
-        ObsID_ = X.values[:, 0].astype(str).tolist()
-
-    # Find rows with all data missing
-    X_nan_map = np.isnan(X_)
-    Xmiss = X_nan_map.astype(int)
-    Xmiss = np.sum(Xmiss, axis=1)
-    indx = find(Xmiss, lambda x: x == X_.shape[1])
-
-    rows_rem = []
-    if len(indx) > 0:
-        for i in indx:
-            if not shush:
-                print(f"Removing row {ObsID_[i]} due to 100% missing data")
-            rows_rem.append(ObsID_[i])
-        if isinstance(X, pd.DataFrame):
-            X_ = X.drop(X.index.values[indx].tolist())
-        else:
-            X_ = np.delete(X_, indx, 0)
-        return X_, rows_rem
-    else:
-        return X, rows_rem
-
-
-def clean_low_variances(
-    X: np.ndarray | pd.DataFrame, *, shush: bool = False, min_var: float = 1e-10
-) -> tuple[np.ndarray | pd.DataFrame, list[str]]:
-    """Remove columns with negligible variance from a matrix.
-
-    Removes columns that have:
-    1. Too much missing data (>= n_rows - 3 missing values)
-    2. Variance below the minimum threshold
-
-    Parameters
-    ----------
-    X : np.ndarray or pd.DataFrame
-        Data matrix to clean. If DataFrame, first column is assumed
-        to be observation IDs.
-    shush : bool, default=False
-        If True, suppress console output about removed columns.
-    min_var : float, default=1e-10
-        Minimum variance threshold. Columns with variance below this
-        are removed.
-
-    Returns
-    -------
-    tuple[np.ndarray | pd.DataFrame, list[str]]
-        - X_cleaned: Matrix with low-variance columns removed
-        - cols_removed: List of removed column identifiers
-    """
-    cols_removed = []
-
-    if isinstance(X, pd.DataFrame):
-        X_ = np.array(X.values[:, 1:]).astype(float)
-        varidX = X.columns.values[1:].tolist()
-    else:
-        X_ = X.copy()
-        varidX = [f"Var #{n}" for n in range(1, X.shape[1] + 1)]
-
-    # Find columns with too much missing data (must have at least 3 samples)
-    X_nan_map = np.isnan(X_)
-    Xmiss = X_nan_map.astype(int)
-    Xmiss = np.sum(Xmiss, axis=0)
-
-    indx = find(Xmiss, lambda x: x >= (X_.shape[0] - 3))
-
-    if len(indx) > 0:
-        for i in indx:
-            if not shush:
-                print(f"Removing variable {varidX[i]} due to 100% missing data")
-        if isinstance(X, pd.DataFrame):
-            for i in indx:
-                cols_removed.append(varidX[i])
-            indx_arr = np.array(indx) + 1
-            X_pd = X.drop(X.columns[indx_arr], axis=1)
-            X_ = np.array(X_pd.values[:, 1:]).astype(float)
-        else:
-            for i in indx:
-                cols_removed.append(varidX[i])
-            X_ = np.delete(X_, indx, 1)
-            X_pd = X_  # For numpy, track the cleaned array
-    else:
-        X_pd = X.copy() if isinstance(X, pd.DataFrame) else X_
-
-    # Get new column names after first cleaning pass
-    if isinstance(X, pd.DataFrame):
-        new_cols = X_pd.columns[1:].tolist()
-    else:
-        # For numpy arrays, update varidX by removing dropped columns
-        new_cols = [v for i, v in enumerate(varidX) if i not in indx]
-
-    # Find columns with low variance
-    std_x = std(X_)
-    std_x = std_x.flatten()
-
-    indx2 = find(std_x, lambda x: x < min_var)
-
-    if len(indx2) > 0:
-        for i in indx2:
-            if not shush:
-                print(f"Removing variable {new_cols[i]} due to low variance")
-        if isinstance(X, pd.DataFrame):
-            for i in indx2:
-                cols_removed.append(new_cols[i])
-            indx2_arr = np.array(indx2) + 1
-            X_ = X_pd.drop(X_pd.columns[indx2_arr], axis=1)
-        else:
-            for i in indx2:
-                cols_removed.append(new_cols[i])
-            X_ = np.delete(X_, indx2, 1)
-        return X_, cols_removed
-    else:
-        return X_pd, cols_removed
 
 
 # =============================================================================
@@ -590,3 +362,88 @@ def reconcile_rows_to_columns(
         df_list_c_o.append(dfc_)
 
     return df_list_r_o, df_list_c_o
+
+
+# =============================================================================
+# JRPLS/TPLS Data Parsing
+# =============================================================================
+
+
+def parse_materials(
+    filename: str, sheetname: str
+) -> tuple[list[pd.DataFrame], list[str]]:
+    """Build R matrices for JRPLS model from linear table.
+
+    Routine to parse out compositions from linear table.
+    This reads an excel file with four columns:
+        'Finished Product Lot', 'Material Lot', 'Ratio or Quantity', 'Material'
+
+    where the usage per batch of finished product is recorded. e.g.
+
+    Finished Product Lot | Material Lot | Ratio or Quantity | Material
+    A001                 | A            | 0.75              | Drug
+    A001                 | B            | 0.25              | Drug
+    A001                 | Z            | 1.0               | Excipient
+
+    Parameters
+    ----------
+    filename : str
+        Name of excel workbook containing the data.
+    sheetname : str
+        Name of the sheet in the workbook with the data.
+
+    Returns
+    -------
+    tuple[list[pd.DataFrame], list[str]]
+        - JR: Joint R matrix of material consumption, list of dataframes
+        - materials_used: Names of materials
+    """
+    materials = pd.read_excel(filename, sheet_name=sheetname)
+
+    ok = True
+    for lot in unique(materials, "Finished Product Lot"):
+        this_lot = materials[materials["Finished Product Lot"] == lot]
+        for mt, m in zip(
+            this_lot["Material"].values, this_lot["Material Lot"].values
+        ):
+            try:
+                if np.isnan(m):
+                    print("Lot " + lot + " has no Material Lot for " + mt)
+                    ok = False
+                    break
+            except:
+                d = 1
+        if not (ok):
+            break
+        print(
+            "Lot :"
+            + lot
+            + " ratio/qty adds to "
+            + str(np.sum(this_lot["Ratio or Quantity"].values))
+        )
+
+    if ok:
+        JR = []
+        materials_used = unique(materials, "Material")
+        fp_lots = unique(materials, "Finished Product Lot")
+        for m in materials_used:
+            r_mat = []
+            mat_lots = np.unique(
+                materials["Material Lot"][materials["Material"] == m]
+            ).tolist()
+            for lot in fp_lots:
+                rvec = np.zeros(len(mat_lots))
+                this_lot_this_mat = materials[
+                    (materials["Finished Product Lot"] == lot)
+                    & (materials["Material"] == m)
+                ]
+                for l, r in zip(
+                    this_lot_this_mat["Material Lot"].values,
+                    this_lot_this_mat["Ratio or Quantity"].values,
+                ):
+                    rvec[mat_lots.index(l)] = r
+                r_mat.append(rvec)
+            r_mat_pd = pd.DataFrame(np.array(r_mat), columns=mat_lots)
+            r_mat_pd.insert(0, "FPLot", fp_lots)
+            JR.append(r_mat_pd)
+        return JR, materials_used
